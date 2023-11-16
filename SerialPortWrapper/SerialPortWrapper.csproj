@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <RootNamespace>SerialPortWrapper</RootNamespace>
+        <TargetFramework>net6.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>disable</Nullable>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <Authors>w7rus</Authors>
+        <Description>A serial port wrapper with asynchronous support via channels</Description>
+        <Title>SerialPortWrapper</Title>
+        <PackageId>w7rus.SerialPortWrapper</PackageId>
+        <PublicSign>false</PublicSign>
+        <PackageProjectUrl>https://github.com/w7rus/SerialPortWrapper/</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/w7rus/SerialPortWrapper/</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="System.IO.Ports" Version="8.0.0"/>
+    </ItemGroup>
+
+</Project>
