@@ -28,10 +28,10 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
 
     private readonly Channel<byte[]> _writeChannel;
 
-    private CancellationTokenSource? _cancellationTokenSource;
+    private CancellationTokenSource _cancellationTokenSource;
 
-    private TaskCompletionSource? _readTaskCompletionSource;
-    private TaskCompletionSource? _writeTaskCompletionSource;
+    private TaskCompletionSource _readTaskCompletionSource;
+    private TaskCompletionSource _writeTaskCompletionSource;
 
     /// <summary>
     ///     Creates an instance of serial port wrapper
