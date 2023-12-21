@@ -9,6 +9,7 @@ namespace SerialPortWrapper;
 public interface ISerialPortWrapper
 {
     bool ConnectionState { get; }
+    SerialPort SerialPort { get; }
     void Open(CancellationToken cancellationToken = default);
     void Close(CancellationToken cancellationToken = default);
     ValueTask SendMessage(byte[] message, CancellationToken cancellationToken = default);
@@ -21,15 +22,9 @@ public interface ISerialPortWrapper
 public class SerialPortWrapper : ISerialPortWrapper, IDisposable
 {
     private readonly PeriodicTimer _periodicTimer;
-
     private readonly Channel<byte[]> _readChannel;
-
-    private readonly SerialPort _serialPort;
-
     private readonly Channel<byte[]> _writeChannel;
-
     private CancellationTokenSource _cancellationTokenSource;
-
     private TaskCompletionSource _readTaskCompletionSource;
     private TaskCompletionSource _writeTaskCompletionSource;
 
@@ -55,12 +50,12 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
 
         var serialPort = new SerialPort(portName);
 
-        _serialPort = serialPort;
+        SerialPort = serialPort;
 
         _periodicTimer = new PeriodicTimer(waitReadWrite ?? TimeSpan.FromMilliseconds(10));
 
-        _serialPort.ErrorReceived += OnSerialPortErrorReceived;
-        _serialPort.PinChanged += OnSerialPortPinChanged;
+        SerialPort.ErrorReceived += OnSerialPortErrorReceived;
+        SerialPort.PinChanged += OnSerialPortPinChanged;
     }
 
     /// <summary>
@@ -82,7 +77,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
         TimeSpan? waitReadWrite
     ) : this(readChannel, writeChannel, portName, waitReadWrite)
     {
-        _serialPort.BaudRate = baudRate;
+        SerialPort.BaudRate = baudRate;
     }
 
     /// <summary>
@@ -109,7 +104,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
         TimeSpan? waitReadWrite
     ) : this(readChannel, writeChannel, portName, baudRate, waitReadWrite)
     {
-        _serialPort.Parity = parity;
+        SerialPort.Parity = parity;
     }
 
     /// <summary>
@@ -138,7 +133,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
         TimeSpan? waitReadWrite
     ) : this(readChannel, writeChannel, portName, baudRate, parity, waitReadWrite)
     {
-        _serialPort.DataBits = dataBits;
+        SerialPort.DataBits = dataBits;
     }
 
     /// <summary>
@@ -177,7 +172,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
         waitReadWrite
     )
     {
-        _serialPort.StopBits = stopBits;
+        SerialPort.StopBits = stopBits;
     }
 
     public SerialPortWrapper(
@@ -545,7 +540,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     /// </summary>
     public void Dispose()
     {
-        _serialPort.Dispose();
+        SerialPort.Dispose();
         _cancellationTokenSource?.Dispose();
         _periodicTimer.Dispose();
         GC.SuppressFinalize(this);
@@ -554,7 +549,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     /// <summary>
     ///     Whether serial port is open or closed
     /// </summary>
-    public bool ConnectionState => _serialPort.IsOpen;
+    public bool ConnectionState => SerialPort.IsOpen;
 
     /// <summary>
     ///     Opens underlying serial port connection
@@ -564,13 +559,13 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     /// <exception cref="InvalidOperationException"></exception>
     public void Open(CancellationToken cancellationToken = default)
     {
-        if (_serialPort.IsOpen)
+        if (SerialPort.IsOpen)
             throw new SerialPortWrapperConnectionStateException("Already open!");
 
         _writeTaskCompletionSource = new TaskCompletionSource();
         _readTaskCompletionSource = new TaskCompletionSource();
 
-        _serialPort.Open();
+        SerialPort.Open();
         _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         Task.Factory.StartNew(() => Write(_cancellationTokenSource.Token), TaskCreationOptions.LongRunning);
@@ -585,7 +580,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     /// <exception cref="InvalidOperationException"></exception>
     public void Close(CancellationToken cancellationToken = default)
     {
-        if (!_serialPort.IsOpen)
+        if (!SerialPort.IsOpen)
             throw new SerialPortWrapperConnectionStateException("Already closed!");
 
         _cancellationTokenSource?.Cancel();
@@ -593,7 +588,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
         _writeTaskCompletionSource?.Task.WaitAsync(cancellationToken);
         _readTaskCompletionSource?.Task.WaitAsync(cancellationToken);
 
-        _serialPort.Close();
+        SerialPort.Close();
     }
 
     /// <summary>
@@ -615,6 +610,11 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     {
         return await _readChannel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    ///     Gets an underlying instance of serial port
+    /// </summary>
+    public SerialPort SerialPort { get; }
 
     public event EventHandler<SerialPinChangedEventArgs> SerialPortPinChanged;
 
@@ -642,30 +642,30 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            var (bufferRead, bytesRead) = await ReadBufferAsync(cancellationToken).ConfigureAwait(false);
+            var bufferRead = await ReadBufferAsync(cancellationToken).ConfigureAwait(false);
 
             await _readChannel.Writer.WriteAsync(bufferRead, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async ValueTask<(byte[] buffer, int bytesRead)> ReadBufferAsync(CancellationToken cancellationToken)
+    private async ValueTask<byte[]> ReadBufferAsync(CancellationToken cancellationToken)
     {
         try
         {
-            while (_serialPort.BytesToRead == 0) await _periodicTimer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
+            while (SerialPort.BytesToRead == 0) await _periodicTimer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
 
-            var bytesToRead = _serialPort.BytesToRead;
+            var bytesToRead = SerialPort.BytesToRead;
 
             var buffer = new byte[bytesToRead];
 
-            var bytesRead = await _serialPort.BaseStream.ReadAsync(buffer.AsMemory(0, bytesToRead), cancellationToken).ConfigureAwait(false);
+            _ = await SerialPort.BaseStream.ReadAsync(buffer.AsMemory(0, bytesToRead), cancellationToken).ConfigureAwait(false);
 
-            return (buffer, bytesRead);
+            return buffer;
         }
         catch (OperationCanceledException)
         {
             // Cancellation was requested
-            return (Array.Empty<byte>(), -1);
+            return Array.Empty<byte>();
         }
     }
 
@@ -673,9 +673,9 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     {
         try
         {
-            await _serialPort.BaseStream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+            await SerialPort.BaseStream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
 
-            while (_serialPort.BytesToWrite > 0) await _periodicTimer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
+            while (SerialPort.BytesToWrite > 0) await _periodicTimer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
