@@ -10,8 +10,8 @@ public interface ISerialPortWrapper
 {
     bool ConnectionState { get; }
     SerialPort SerialPort { get; }
-    void Open(CancellationToken cancellationToken = default);
-    void Close(CancellationToken cancellationToken = default);
+    void Open();
+    void Close();
     ValueTask SendMessage(byte[] message, CancellationToken cancellationToken = default);
     ValueTask<byte[]> ReceiveMessage(CancellationToken cancellationToken = default);
 }
@@ -25,8 +25,8 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     private readonly Channel<byte[]> _readChannel;
     private readonly Channel<byte[]> _writeChannel;
     private CancellationTokenSource _cancellationTokenSource;
-    private TaskCompletionSource _readTaskCompletionSource;
-    private TaskCompletionSource _writeTaskCompletionSource;
+    private Task _readTask;
+    private Task _writeTask;
 
     /// <summary>
     ///     Creates an instance of serial port wrapper
@@ -53,9 +53,6 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
         SerialPort = serialPort;
 
         _periodicTimer = new PeriodicTimer(waitReadWrite ?? TimeSpan.FromMilliseconds(10));
-
-        SerialPort.ErrorReceived += OnSerialPortErrorReceived;
-        SerialPort.PinChanged += OnSerialPortPinChanged;
     }
 
     /// <summary>
@@ -554,39 +551,34 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     /// <summary>
     ///     Opens underlying serial port connection
     /// </summary>
-    /// <param name="cancellationToken"></param>
     /// <returns>Whether the serial port connection successfully opened</returns>
     /// <exception cref="InvalidOperationException"></exception>
-    public void Open(CancellationToken cancellationToken = default)
+    public void Open()
     {
         if (SerialPort.IsOpen)
             throw new SerialPortWrapperConnectionStateException("Already open!");
 
-        _writeTaskCompletionSource = new TaskCompletionSource();
-        _readTaskCompletionSource = new TaskCompletionSource();
-
         SerialPort.Open();
-        _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-        Task.Factory.StartNew(() => Write(_cancellationTokenSource.Token), TaskCreationOptions.LongRunning);
-        Task.Factory.StartNew(() => Read(_cancellationTokenSource.Token), TaskCreationOptions.LongRunning);
+        _cancellationTokenSource = new CancellationTokenSource();
+
+        _writeTask = Task.Factory.StartNew(async () => await Write(_cancellationTokenSource.Token).ConfigureAwait(false), TaskCreationOptions.LongRunning);
+        _readTask = Task.Factory.StartNew(async () => await Read(_cancellationTokenSource.Token).ConfigureAwait(false), TaskCreationOptions.LongRunning);
     }
 
     /// <summary>
     ///     Closes underlying serial port connection
     /// </summary>
-    /// <param name="cancellationToken"></param>
     /// <returns>Whether the serial port connection successfully closed</returns>
     /// <exception cref="InvalidOperationException"></exception>
-    public void Close(CancellationToken cancellationToken = default)
+    public void Close()
     {
         if (!SerialPort.IsOpen)
             throw new SerialPortWrapperConnectionStateException("Already closed!");
 
         _cancellationTokenSource?.Cancel();
-
-        _writeTaskCompletionSource?.Task.WaitAsync(cancellationToken);
-        _readTaskCompletionSource?.Task.WaitAsync(cancellationToken);
+        _writeTask.Wait();
+        _readTask.Wait();
 
         SerialPort.Close();
     }
@@ -598,7 +590,7 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     /// <param name="cancellationToken"></param>
     public async ValueTask SendMessage(byte[] message, CancellationToken cancellationToken = default)
     {
-        await _writeChannel.Writer.WriteAsync(message, cancellationToken).ConfigureAwait(false);
+        await _writeChannel.Writer.WriteAsync(message, CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken).Token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -608,25 +600,13 @@ public class SerialPortWrapper : ISerialPortWrapper, IDisposable
     /// <returns></returns>
     public async ValueTask<byte[]> ReceiveMessage(CancellationToken cancellationToken = default)
     {
-        return await _readChannel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return await _readChannel.Reader.ReadAsync(CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken).Token).ConfigureAwait(false);
     }
 
     /// <summary>
     ///     Gets an underlying instance of serial port
     /// </summary>
     public SerialPort SerialPort { get; }
-
-    public event EventHandler<SerialPinChangedEventArgs> SerialPortPinChanged;
-
-    private void OnSerialPortPinChanged(object sender, SerialPinChangedEventArgs args)
-    {
-        SerialPortPinChanged?.Invoke(sender, args);
-    }
-
-    private void OnSerialPortErrorReceived(object sender, SerialErrorReceivedEventArgs args)
-    {
-        throw new InvalidOperationException($"SerialPort error: {Enum.GetName(typeof(SerialError), args.EventType)}");
-    }
 
     private async ValueTask Write(CancellationToken cancellationToken = default)
     {
